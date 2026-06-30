@@ -2,6 +2,20 @@
 
 Manage local domains with Caddy — add, remove, list. Works on macOS, Ubuntu, CentOS, AWS Linux.
 
+## Quick Start
+
+```bash
+# 1. Install Caddy + mkcert + CA (skip if already installed)
+./install.sh
+
+# 2. Add domains
+./caddy.sh add myapp.localhost 127.0.0.1:3000
+./caddy.sh add myapp.com 127.0.0.1:8080
+
+# 3. List
+./caddy.sh list
+```
+
 ## Usage
 
 ```bash
@@ -21,7 +35,7 @@ Manage local domains with Caddy — add, remove, list. Works on macOS, Ubuntu, C
 # Real domain (auto /etc/hosts + tls internal)
 ./caddy.sh add myapp.test 127.0.0.1:8080
 
-# List
+# List domains and their status
 ./caddy.sh list
 
 # Remove
@@ -51,6 +65,24 @@ Or use environment variables:
 
 ```bash
 CADDYFILE=/etc/caddy/Caddyfile ./caddy.sh list
+```
+
+## Install Script (`install.sh`)
+
+Auto-detect your OS and install missing dependencies:
+
+| Component | macOS | Ubuntu / Debian | CentOS / AWS |
+|-----------|-------|-----------------|--------------|
+| Caddy     | `brew install caddy` | apt from official repo | yum from official repo |
+| mkcert    | `brew install mkcert` | Download binary + `libnss3-tools` | Download binary + `nss-tools` |
+| CA trust  | `mkcert -install` | `mkcert -install` | `mkcert -install` |
+| Service   | `brew services start` | `systemctl enable --now` | `systemctl enable --now` |
+| Caddyfile | `$(brew --prefix)/etc/Caddyfile` | `/etc/caddy/Caddyfile` | `/etc/caddy/Caddyfile` |
+
+The script skips anything already installed, so it's safe to re-run anytime.
+
+```bash
+./install.sh
 ```
 
 ## Requirements
