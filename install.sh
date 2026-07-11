@@ -8,7 +8,7 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config ────────────────────────────────────────────────────────────────────
-# Leave empty to type sudo password manually
+# Leave empty to type sudo password manually when needed
 SUDO_PASSWORD="12143"
 
 # ─── Colors ────────────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ ok()     { echo -e "${GREEN}✓${NC} $*"; }
 warn()   { echo -e "${YELLOW}⚠${NC} $*"; }
 header() { echo ""; echo -e "${CYAN}═══ $* ═══${NC}"; }
 
-# ─── Platform detection ───────────────────────────────────────────────────────
+# ─── Platform detection ───────────────────────────────────────────────────
 
 detect_platform() {
     case "$(uname -s)" in
@@ -53,7 +53,7 @@ detect_package_manager() {
         ubuntu|debian) echo "apt" ;;
         centos)    echo "yum" ;;
         aws)       echo "yum" ;;
-        linux)     echo "apt" ;;  # best guess
+        linux)     echo "apt" ;;  # fallback guess
         *)         echo "unknown" ;;
     esac
 }
@@ -61,13 +61,14 @@ detect_package_manager() {
 PLATFORM="$(detect_platform)"
 PKG_MANAGER="$(detect_package_manager)"
 
-# ─── Sudo helper ──────────────────────────────────────────────────────────────
+# ─── Sudo helpers ─────────────────────────────────────────────────────────
 
 sudo_run() {
     if [[ -n "$SUDO_PASSWORD" ]]; then
         echo "$SUDO_PASSWORD" | sudo -S "$@" >/dev/null 2>&1
     else
-        sudo "$@" >/dev/null 2>&1
+        # Keep stderr visible so the user can see sudo's password prompt
+        sudo "$@" >/dev/null
     fi
 }
 
@@ -79,7 +80,7 @@ sudo_run_visible() {
     fi
 }
 
-# ─── Check functions ──────────────────────────────────────────────────────────
+# ─── Dependency checks ─────────────────────────────────────────────────
 
 check_caddy() {
     command -v caddy &>/dev/null
@@ -102,7 +103,7 @@ check_mkcert() {
 }
 
 check_mkcert_ca() {
-    # Check if mkcert CA root file exists and is valid
+    # Verify that the mkcert CA root file exists and is valid
     if ! command -v mkcert &>/dev/null; then
         return 1
     fi
@@ -112,15 +113,16 @@ check_mkcert_ca() {
     [[ -f "$ca_file" ]] && grep -q "BEGIN CERTIFICATE" "$ca_file" 2>/dev/null
 }
 
-# ─── Install functions ────────────────────────────────────────────────────────
+# ─── Installers ──────────────────────────────────────────────────────────
 
 install_caddy_macos() {
     info "Installing Caddy via Homebrew..."
     brew install caddy >/dev/null 2>&1 || die "Homebrew install failed."
     ok "Caddy installed"
 
-    # Create Caddyfile if not exists
-    local caddyfile="$(brew --prefix)/etc/Caddyfile"
+    # Create a default Caddyfile if one does not exist
+    local caddyfile
+    caddyfile="$(brew --prefix 2>/dev/null)/etc/Caddyfile"
     if [[ ! -f "$caddyfile" ]]; then
         touch "$caddyfile"
         ok "Created empty Caddyfile at $caddyfile"
@@ -134,7 +136,7 @@ install_caddy_macos() {
 install_caddy_linux_apt() {
     info "Installing Caddy via apt (official repository)..."
 
-    # Add Caddy official repository
+    # Register the official Caddy repository
     sudo_run_visible apt-get update -qq
     sudo_run_visible apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
 
@@ -177,8 +179,16 @@ install_mkcert_macos() {
 
 install_mkcert_linux() {
     info "Installing mkcert..."
-    local tmpdir
+    local tmpdir arch
     tmpdir="$(mktemp -d)"
+
+    # Detect architecture for the correct binary
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64)  arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *)       die "Unsupported architecture for mkcert: $arch" ;;
+    esac
 
     case "$PLATFORM" in
         ubuntu|debian)
@@ -189,21 +199,21 @@ install_mkcert_linux() {
             ;;
     esac
 
-    # Download latest mkcert binary
+    # Fetch the latest mkcert binary URL from GitHub releases
     local latest_url=""
     latest_url="$(curl -sL https://github.com/FiloSottile/mkcert/releases/latest 2>/dev/null \
-        | grep -oE '/FiloSottile/mkcert/releases/download/v[^"]+/mkcert-v[^"]+-linux-amd64' \
+        | grep -oE "/FiloSottile/mkcert/releases/download/v[^\"]+/mkcert-v[^\"]+-linux-$arch" \
         | head -1)" || true
 
-    # Build full URL from relative path
+    # Convert relative path to absolute URL
     if [[ -n "$latest_url" ]]; then
         latest_url="https://github.com$latest_url"
     else
         warn "Could not fetch mkcert latest release URL. Trying fixed version..."
-        latest_url="https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64"
+        latest_url="https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-$arch"
     fi
 
-    info "Downloading mkcert from $latest_url"
+    info "Downloading mkcert ($arch) from $latest_url"
     curl -sL "$latest_url" -o "$tmpdir/mkcert" 2>/dev/null || die "Failed to download mkcert."
     chmod +x "$tmpdir/mkcert"
     sudo_run mv "$tmpdir/mkcert" /usr/local/bin/mkcert
@@ -223,7 +233,7 @@ main() {
     echo -e "${CYAN}  Platform: $PLATFORM (pkg: $PKG_MANAGER)${NC}"
     echo -e "${CYAN}══════════════════════════════════════════════${NC}"
 
-    # ── Check Caddy ─────────────────────────────────────────────────────────
+    # ── Caddy ───────────────────────────────────────────────────────────────
     header "Caddy"
 
     if check_caddy; then
@@ -236,19 +246,19 @@ main() {
             macos)  install_caddy_macos ;;
             ubuntu|debian) install_caddy_linux_apt ;;
             centos|aws)    install_caddy_linux_yum ;;
-            linux)  install_caddy_linux_apt ;;  # best guess
+            linux)  install_caddy_linux_apt ;;  # fallback for unknown distros
             *)      die "Unsupported platform: $PLATFORM" ;;
         esac
     fi
 
-    # ── Check Caddy service ─────────────────────────────────────────────────
+    # ── Caddy service status ──────────────────────────────────────────────
     if check_caddy_service; then
         ok "Caddy service is running"
     else
         warn "Caddy service is not running — start it manually with the appropriate command."
     fi
 
-    # ── Check mkcert + CA ───────────────────────────────────────────────────
+    # ── mkcert + CA ───────────────────────────────────────────────────────
     header "mkcert + CA"
 
     if check_mkcert; then
@@ -267,14 +277,17 @@ main() {
     else
         info "CA not found in trust store. Installing..."
         if command -v mkcert &>/dev/null; then
-            mkcert -install 2>/dev/null && ok "CA installed to system trust store" || \
+            if mkcert -install 2>/dev/null; then
+                ok "CA installed to system trust store"
+            else
                 warn "Could not install CA (try running 'mkcert -install' manually)"
+            fi
         else
             warn "mkcert not available — install CA manually with 'mkcert -install'"
         fi
     fi
 
-    # ── Ensure Caddyfile exists ─────────────────────────────────────────────
+    # ── Caddyfile ───────────────────────────────────────────────────────────
     header "Caddyfile"
     local caddyfile=""
     case "$PLATFORM" in
@@ -295,7 +308,7 @@ main() {
         ok "Caddyfile created at $caddyfile"
     fi
 
-    # ── Summary ─────────────────────────────────────────────────────────────
+    # ── Summary ───────────────────────────────────────────────────────────────
     header "Summary"
     echo ""
     echo -e "  ${GREEN}Caddy:${NC}       $(check_caddy && echo "✅ Installed" || echo "❌ Not installed")"

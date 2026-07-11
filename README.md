@@ -29,11 +29,11 @@ Manage local domains with Caddy — add, remove, list. Works on macOS, Ubuntu, C
 ## Examples
 
 ```bash
-# .localhost domain (auto HTTPS, no /etc/hosts needed)
+# .localhost domain (Caddy auto HTTPS, no /etc/hosts needed)
 ./caddy.sh add myapp.localhost 127.0.0.1:3000
 
-# Real domain (auto /etc/hosts + tls internal)
-./caddy.sh add myapp.test 127.0.0.1:8080
+# Real domain (Let's Encrypt auto, /etc/hosts added only on local machines)
+./caddy.sh add myapp.com 127.0.0.1:8080
 
 # List domains and their status
 ./caddy.sh list
@@ -44,12 +44,14 @@ Manage local domains with Caddy — add, remove, list. Works on macOS, Ubuntu, C
 
 ## Features
 
-- **BEGIN / END markers** — each domain is a clean block, remove deletes everything
+- **BEGIN / END markers** — each domain is a clean block, removal deletes everything
 - **Timestamp** — adds `# Added: YYYY-MM-DD HH:MM:SS` on creation
-- **Auto /etc/hosts** — non-`.localhost` domains get a hosts entry automatically
-- **TLS internal** — real domains use `tls internal` so Caddy generates a local certificate
+- **Auto /etc/hosts** — non-`.localhost` domains get a hosts entry automatically on local machines
+- **Auto SSL** — Caddy handles certificates automatically:
+  - `.localhost` → Caddy auto HTTPS (no config needed)
+  - Real domain → **Let's Encrypt** auto-provisioning (no `tls internal` needed)
 - **Cross-platform** — macOS (Homebrew) / Linux (systemctl)
-- **Port status** — shows active (◉) vs inactive (○) ports in list
+- **Port status** — shows active (◉) vs inactive (○) ports in the list
 
 ## Configuration
 
@@ -105,7 +107,6 @@ myapp.localhost {
 # --- BEGIN myapp.com ---
 # Added: 2026-06-30 22:19:50
 myapp.com {
-    tls internal
     reverse_proxy 127.0.0.1:8080
 }
 # --- END myapp.com ---

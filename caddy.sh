@@ -13,8 +13,7 @@ set -euo pipefail
 # CONFIG — Edit these to match your system
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# System password for sudo (used when adding/removing /etc/hosts entries)
-# Leave empty to be prompted for password when needed
+# Sudo password (leave empty to type manually when needed)
 SUDO_PASSWORD="12143"
 
 # Caddyfile path — auto-detected by default, override here if needed
@@ -97,7 +96,7 @@ if [[ -z "$CADDY_RESTART_CMD" ]]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# COLORS — Disabled if not a terminal
+# COLORS — Disabled when not in a terminal
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if [[ -t 1 ]]; then
@@ -133,7 +132,7 @@ EOF
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# UTILITY
+# UTILITY FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 die() { echo -e "${RED}Error:${NC} $*" >&2; exit 1; }
@@ -141,26 +140,27 @@ info() { echo -e "${CYAN}Info:${NC} $*"; }
 ok() { echo -e "${GREEN}✓${NC} $*"; }
 warn() { echo -e "${YELLOW}⚠${NC} $*"; }
 
-# Escape domain for use in regex/sed patterns
+# Escape domain special chars for use in regex/sed patterns
 escape_domain() {
     echo "$1" | sed 's/\([.[\\*^$+?{}|()]\)/\\\1/g'
 }
 
-# Cross-platform mktemp
+# Cross-platform temp file creation
 safe_mktemp() {
     mktemp 2>/dev/null || mktemp -t caddy
 }
 
-# Sudo with optional password
+# Run a command via sudo, optionally with a preset password
 sudo_run() {
     if [[ -n "$SUDO_PASSWORD" ]]; then
         echo "$SUDO_PASSWORD" | sudo -S "$@" >/dev/null 2>&1
     else
-        sudo "$@" >/dev/null 2>&1
+        # Do not suppress stderr — user needs to see the sudo password prompt
+        sudo "$@" >/dev/null
     fi
 }
 
-# Check if a port is listening (cross-platform)
+# Check if a TCP port is currently listening (cross-platform)
 is_port_listening() {
     local port="$1"
     case "$PLATFORM" in
@@ -178,6 +178,36 @@ is_port_listening() {
             ;;
         *) return 1 ;;
     esac
+}
+
+# Check whether an IP falls in a private / local range
+is_private_ip() {
+    local ip="$1"
+    [[ "$ip" =~ ^127\. ]] && return 0   # loopback
+    [[ "$ip" =~ ^10\. ]] && return 0     # 10.0.0.0/8
+    [[ "$ip" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]] && return 0  # 172.16.0.0/12
+    [[ "$ip" =~ ^192\.168\. ]] && return 0  # 192.168.0.0/16
+    return 1
+}
+
+# Check if this machine has any private IP address (i.e. is a local dev machine)
+has_private_ip() {
+    local ips
+    case "$PLATFORM" in
+        macos)
+            ips="$(ifconfig 2>/dev/null | grep -E 'inet ' | awk '{print $2}')" || return 1
+            ;;
+        linux|ubuntu|debian|centos|aws)
+            ips="$(hostname -I 2>/dev/null)" || return 1
+            ;;
+        *) return 1 ;;
+    esac
+    [[ -z "$ips" ]] && return 1
+    local ip
+    for ip in $ips; do
+        is_private_ip "$ip" && return 0
+    done
+    return 1
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -204,6 +234,40 @@ has_hosts_entry() {
     grep -qsE "^127\\.0\\.0\\.1[[:space:]]+$escaped" /etc/hosts 2>/dev/null
 }
 
+# Add a /etc/hosts entry for a domain (only on local machines, skip .localhost)
+ensure_hosts_entry() {
+    local domain="$1"
+    [[ "$domain" == *.localhost ]] && return
+    has_private_ip || return
+    has_hosts_entry "$domain" && { ok "/etc/hosts entry already exists for '$domain'"; return; }
+
+    info "Adding /etc/hosts entry for '$domain'..."
+    local hosts_entry="127.0.0.1  $domain"
+    if sudo_run sh -c "echo \"$hosts_entry\" >> /etc/hosts"; then
+        ok "Added 127.0.0.1 $domain to /etc/hosts"
+    else
+        warn "Could not add /etc/hosts entry (add manually)."
+    fi
+}
+
+# Remove a /etc/hosts entry for a domain
+remove_hosts_entry() {
+    local domain="$1"
+    [[ "$domain" == *.localhost ]] && return
+    has_hosts_entry "$domain" || return
+
+    info "Removing /etc/hosts entry for '$domain'..."
+    local escaped tmpfile
+    escaped="$(escape_domain "$domain")"
+    tmpfile="$(safe_mktemp)"
+    grep -vE "^127\\.0\\.0\\.1[[:space:]]+$escaped" /etc/hosts > "$tmpfile"
+    if sudo_run mv "$tmpfile" /etc/hosts; then
+        ok "Removed '$domain' from /etc/hosts"
+    else
+        warn "Could not remove /etc/hosts entry (remove manually)."
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # COMMAND: add
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -211,15 +275,16 @@ has_hosts_entry() {
 cmd_add() {
     local domain="$1" target="$2"
 
-    # Validate
+    # Validate target format (ip:port or host:port)
     if ! [[ "$target" =~ ^[a-zA-Z0-9._-]+:[0-9]+$ ]]; then
         die "Invalid target '$target'. Expected ip:port or host:port, e.g. 127.0.0.1:3000"
     fi
+    # Validate domain format
     if ! [[ "$domain" =~ ^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$ ]]; then
         die "Invalid domain '$domain'. Expected e.g. 'myapp.localhost' or 'myapp.test'"
     fi
 
-    # Check duplicate
+    # If the domain already exists, offer to overwrite the target
     if domain_exists "$domain"; then
         local existing_target
         existing_target="$(get_proxy_target "$domain")"
@@ -232,6 +297,7 @@ cmd_add() {
             if [[ "$confirm" =~ ^[Yy]$ ]]; then
                 cmd_remove "$domain" --quiet
                 append_block "$domain" "$target"
+                ensure_hosts_entry "$domain"             # <-- re-add hosts entry (fix: was missing before)
                 restart_caddy
                 ok "Domain '$domain' updated → $target"
             else
@@ -242,39 +308,49 @@ cmd_add() {
     fi
 
     append_block "$domain" "$target"
-
-    # /etc/hosts for non-.localhost
-    if [[ "$domain" != *.localhost ]]; then
-        if ! has_hosts_entry "$domain"; then
-            info "Adding /etc/hosts entry for '$domain'..."
-            local hosts_entry="127.0.0.1  $domain"
-            if sudo_run sh -c "echo \"$hosts_entry\" >> /etc/hosts"; then
-                ok "Added 127.0.0.1 $domain to /etc/hosts"
-            else
-                warn "Could not add /etc/hosts entry (add manually)."
-            fi
-        else
-            ok "/etc/hosts entry already exists for '$domain'"
-        fi
-    fi
-
+    ensure_hosts_entry "$domain"
     restart_caddy
     ok "Domain '$domain' added → $target"
 }
 
 append_block() {
-    local domain="$1" target="$2" tls_line=""
+    local domain="$1" target="$2"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
-    # Non-.localhost domains need tls internal for local HTTPS
-    [[ "$domain" != *.localhost ]] && tls_line="    tls internal\n"
+    # Ensure the file exists (use sudo on Linux where Caddyfile is typically root-owned)
+    if [[ -f "$CADDYFILE" ]]; then
+        if [[ ! -w "$CADDYFILE" ]]; then
+            sudo_run touch "$CADDYFILE" 2>/dev/null || true
+        fi
+    else
+        if [[ ! -w "$(dirname "$CADDYFILE")" ]]; then
+            sudo_run mkdir -p "$(dirname "$CADDYFILE")"
+            sudo_run touch "$CADDYFILE"
+        else
+            touch "$CADDYFILE"
+        fi
+    fi
 
-    touch "$CADDYFILE"
-    [[ -s "$CADDYFILE" ]] && echo "" >> "$CADDYFILE"
+    # Add a blank line separator if the file is non-empty
+    if [[ -s "$CADDYFILE" ]]; then
+        if [[ -w "$CADDYFILE" ]]; then
+            echo "" >> "$CADDYFILE"
+        else
+            echo "" | sudo tee -a "$CADDYFILE" >/dev/null
+        fi
+    fi
 
-    printf "# --- BEGIN %s ---\n# Added: %s\n%s {\n${tls_line}    reverse_proxy %s\n}\n# --- END %s ---\n" \
-        "$domain" "$timestamp" "$domain" "$target" "$domain" >> "$CADDYFILE"
+    local block
+    block="$(printf "# --- BEGIN %s ---\n# Added: %s\n%s {\n    reverse_proxy %s\n}\n# --- END %s ---\n" \
+        "$domain" "$timestamp" "$domain" "$target" "$domain")"
+
+    # Write the block (use sudo if the Caddyfile is not user-writable)
+    if [[ -w "$CADDYFILE" ]]; then
+        printf "%s" "$block" >> "$CADDYFILE"
+    else
+        printf "%s" "$block" | sudo tee -a "$CADDYFILE" >/dev/null
+    fi
 
     ok "Added block to Caddyfile"
 }
@@ -295,23 +371,18 @@ cmd_remove() {
     escaped="$(escape_domain "$domain")"
     tmpfile="$(safe_mktemp)"
     sed "/^# --- BEGIN $escaped ---$/,/^# --- END $escaped ---$/d" "$CADDYFILE" > "$tmpfile"
-    mv "$tmpfile" "$CADDYFILE"
+
+    # Replace the Caddyfile (use sudo on Linux where it is typically root-owned)
+    if [[ -w "$CADDYFILE" ]]; then
+        mv "$tmpfile" "$CADDYFILE"
+    else
+        sudo_run mv "$tmpfile" "$CADDYFILE"
+    fi
 
     [[ "$quiet" != "--quiet" ]] && ok "Removed '$domain' from Caddyfile"
 
-    # Remove /etc/hosts entry
-    if [[ "$domain" != *.localhost ]] && has_hosts_entry "$domain"; then
-        info "Removing /etc/hosts entry for '$domain'..."
-        local escaped2 tmpfile2
-        escaped2="$(escape_domain "$domain")"
-        tmpfile2="$(safe_mktemp)"
-        grep -vE "^127\\.0\\.0\\.1[[:space:]]+$escaped2" /etc/hosts > "$tmpfile2"
-        if sudo_run mv "$tmpfile2" /etc/hosts; then
-            ok "Removed '$domain' from /etc/hosts"
-        else
-            warn "Could not remove /etc/hosts entry (remove manually)."
-        fi
-    fi
+    # Also clean up the corresponding /etc/hosts entry
+    remove_hosts_entry "$domain"
 
     [[ "$quiet" != "--quiet" ]] && { restart_caddy; ok "Domain '$domain' removed"; }
 }
