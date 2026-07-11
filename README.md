@@ -72,37 +72,38 @@ export CADDYFILE=/etc/caddy/Caddyfile
 ./caddy.sh add myapp.com 127.0.0.1:3000
 ```
 
-### Sudo handling — tự động, không cần config
+### Sudo handling — automatic, no config needed
 
-Script tự động phát hiện quyền và dùng cách phù hợp:
+Script auto-detects privileges and chooses the right method:
 
-| Tình huống | `SUDO_PASSWORD` | Hành vi |
+| Scenario | `SUDO_PASSWORD` | Behavior |
 |---|---|---|
-| **Login là root** (VPS) | Không cần set | Chạy trực tiếp, bỏ qua sudo |
-| **User có NOPASSWD sudo** | Không cần set | `sudo` chạy im lặng |
-| **User cần password sudo** | `export SUDO_PASSWORD="pass"` | `sudo -S` dùng password |
-| **User muốn gõ tay** | Để trống | `sudo` prompt qua terminal |
+| **Logged in as root** (VPS) | Not needed | Runs directly, no sudo |
+| **User has NOPASSWD sudo** | Not needed | `sudo` runs silently |
+| **User needs password sudo** | `export SUDO_PASSWORD="pass"` | `sudo -S` with password |
+| **User wants to type password** | Leave empty | `sudo` prompts via terminal |
 
 ### Caddyfile permissions
 
-Trên Linux, Caddyfile thường thuộc `root`. Script tự động dùng `sudo tee` để ghi khi cần.
-Trên macOS, Caddyfile thuộc user — ghi trực tiếp.
+On Linux, the Caddyfile is typically owned by `root`. The script automatically uses `sudo tee` when needed.
+On macOS, the Caddyfile is user-owned — writes are direct.
 
 ### Auto SSL
 
-Caddy tự động xử lý chứng chỉ — script **không thêm** bất kỳ directive `tls` nào:
+Caddy handles certificates automatically — the script **never adds** any `tls` directive:
 
 - `.localhost` → Caddy auto HTTPS (built-in)
-- Domain thật trên VPS → **Let's Encrypt** tự động
-- Domain thật trên máy local → Caddy thử Let's Encrypt (nếu DNS public) hoặc báo lỗi
+- Real domain on a VPS → **Let's Encrypt** auto-provisioning
+- Real domain on a local machine → Caddy tries Let's Encrypt (if DNS is public) or warns
 
-Script tự phát hiện môi trường qua `has_private_ip()`:
-- IP private (192.168.x, 10.x, ...) → thêm `/etc/hosts` để domain trỏ về local
-- IP public (VPS) → **không** thêm `/etc/hosts` (DNS thật xử lý)
+The script detects the environment via `has_private_ip()`:
+- Private IP (192.168.x, 10.x, ...) → adds `/etc/hosts` entry to resolve the domain locally
+- Public IP (VPS) → **skips** `/etc/hosts` (real DNS handles it)
+
 
 ## Install Script (`install.sh`)
 
-Auto-detect OS + architecture và cài đặt:
+Auto-detects OS and architecture, then installs:
 
 | Component | macOS | Ubuntu / Debian | CentOS / AWS |
 |-----------|-------|-----------------|--------------|
