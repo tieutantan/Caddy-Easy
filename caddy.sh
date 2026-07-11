@@ -14,7 +14,8 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Sudo password (leave empty to type manually when needed)
-SUDO_PASSWORD="12143"
+# Can also be set via environment variable: export SUDO_PASSWORD="mypass"
+SUDO_PASSWORD="${SUDO_PASSWORD:-}"
 
 # Caddyfile path — auto-detected by default, override here if needed
 # macOS (Homebrew):  /opt/homebrew/etc/Caddyfile or /usr/local/etc/Caddyfile
@@ -150,12 +151,23 @@ safe_mktemp() {
     mktemp 2>/dev/null || mktemp -t caddy
 }
 
-# Run a command via sudo, optionally with a preset password
+# Check if we are already running as root (no sudo needed)
+is_root() {
+    [[ $EUID -eq 0 ]]
+}
+
+# Run a command with elevated privileges.
+# Supports: already root, NOPASSWD sudo, or password-based sudo.
 sudo_run() {
-    if [[ -n "$SUDO_PASSWORD" ]]; then
+    if is_root; then
+        # Already root — run directly, no sudo needed
+        "$@" >/dev/null 2>&1
+    elif [[ -n "$SUDO_PASSWORD" ]]; then
+        # Password provided — use sudo -S with stdin
         echo "$SUDO_PASSWORD" | sudo -S "$@" >/dev/null 2>&1
     else
-        # Do not suppress stderr — user needs to see the sudo password prompt
+        # No password configured — try NOPASSWD sudo or prompt interactively
+        # Stderr kept visible so user can see the password prompt
         sudo "$@" >/dev/null
     fi
 }
@@ -260,7 +272,8 @@ remove_hosts_entry() {
     local escaped tmpfile
     escaped="$(escape_domain "$domain")"
     tmpfile="$(safe_mktemp)"
-    grep -vE "^127\\.0\\.0\\.1[[:space:]]+$escaped" /etc/hosts > "$tmpfile"
+    # grep returns 1 when no lines match (file would be empty) — ignore that with || true
+    grep -vE "^127\.0\.0\.1[[:space:]]+$escaped" /etc/hosts > "$tmpfile" 2>/dev/null || true
     if sudo_run mv "$tmpfile" /etc/hosts; then
         ok "Removed '$domain' from /etc/hosts"
     else
@@ -318,12 +331,9 @@ append_block() {
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
-    # Ensure the file exists (use sudo on Linux where Caddyfile is typically root-owned)
-    if [[ -f "$CADDYFILE" ]]; then
-        if [[ ! -w "$CADDYFILE" ]]; then
-            sudo_run touch "$CADDYFILE" 2>/dev/null || true
-        fi
-    else
+    # Ensure the Caddyfile exists
+    # If the parent directory is not writable, use sudo (Linux: /etc/caddy/ is root-owned)
+    if [[ ! -f "$CADDYFILE" ]]; then
         if [[ ! -w "$(dirname "$CADDYFILE")" ]]; then
             sudo_run mkdir -p "$(dirname "$CADDYFILE")"
             sudo_run touch "$CADDYFILE"
@@ -445,7 +455,8 @@ parse_managed_blocks() {
 
 restart_caddy() {
     info "Restarting Caddy..."
-    if eval "$CADDY_RESTART_CMD" >/dev/null 2>&1; then
+    # Use sudo_run so it works on Linux (systemctl needs root) and macOS alike
+    if sudo_run sh -c "$CADDY_RESTART_CMD"; then
         ok "Caddy restarted"
     else
         warn "Caddy restart failed — run manually: $CADDY_RESTART_CMD"

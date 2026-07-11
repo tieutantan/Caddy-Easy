@@ -8,8 +8,8 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config ────────────────────────────────────────────────────────────────────
-# Leave empty to type sudo password manually when needed
-SUDO_PASSWORD="12143"
+# Leave empty (or set via env: export SUDO_PASSWORD="mypass") to type manually
+SUDO_PASSWORD="${SUDO_PASSWORD:-}"
 
 # ─── Colors ────────────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -63,17 +63,27 @@ PKG_MANAGER="$(detect_package_manager)"
 
 # ─── Sudo helpers ─────────────────────────────────────────────────────────
 
+# Check if we are already running as root (no sudo needed)
+is_root() {
+    [[ $EUID -eq 0 ]]
+}
+
+# Run a command with elevated privileges (silent, used for setup commands).
 sudo_run() {
-    if [[ -n "$SUDO_PASSWORD" ]]; then
+    if is_root; then
+        "$@" >/dev/null 2>&1
+    elif [[ -n "$SUDO_PASSWORD" ]]; then
         echo "$SUDO_PASSWORD" | sudo -S "$@" >/dev/null 2>&1
     else
-        # Keep stderr visible so the user can see sudo's password prompt
         sudo "$@" >/dev/null
     fi
 }
 
+# Run a command with elevated privileges and visible output (used for installers).
 sudo_run_visible() {
-    if [[ -n "$SUDO_PASSWORD" ]]; then
+    if is_root; then
+        "$@" 2>&1 || true
+    elif [[ -n "$SUDO_PASSWORD" ]]; then
         echo "$SUDO_PASSWORD" | sudo -S "$@" 2>&1 || true
     else
         sudo "$@" 2>&1 || true
