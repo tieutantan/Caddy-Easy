@@ -44,14 +44,13 @@ Manage local domains with Caddy — add, remove, list. Works on macOS, Ubuntu, C
 
 ## Features
 
-- **BEGIN / END markers** — each domain is a clean block, removal deletes everything
-- **Timestamp** — adds `# Added: YYYY-MM-DD HH:MM:SS` on creation
-- **Auto /etc/hosts** — non-`.localhost` domains get a hosts entry automatically on local machines
-- **Auto SSL** — Caddy handles certificates automatically:
-  - `.localhost` → Caddy auto HTTPS (no config needed)
-  - Real domain → **Let's Encrypt** auto-provisioning (no `tls internal` needed)
-- **Cross-platform** — macOS (Homebrew) / Linux (systemctl)
-- **Port status** — shows active (◉) vs inactive (○) ports in the list
+- **Zero-config SSL** — add any domain, HTTPS works automatically:
+  - `.localhost` → Caddy auto HTTPS (no setup needed)
+  - Real domain on VPS → **Let's Encrypt** (auto-provisioned)
+- **Cross-platform** — macOS (Homebrew), Ubuntu, Debian, CentOS, AWS Linux
+- **Port status** — shows active (◉) vs inactive (○) ports in `list`
+- **Auto /etc/hosts** — adds hosts entries on local machines, skips on VPS (real DNS)
+- **Clean blocks** — each domain wrapped in `# --- BEGIN/END ---` markers, removal is always clean
 
 ## Configuration
 
