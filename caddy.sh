@@ -313,6 +313,8 @@ cmd_add() {
                 ensure_hosts_entry "$domain"             # <-- re-add hosts entry (fix: was missing before)
                 restart_caddy
                 ok "Domain '$domain' updated → $target"
+                echo ""
+                cmd_list
             else
                 info "Skipped."
             fi
@@ -324,6 +326,8 @@ cmd_add() {
     ensure_hosts_entry "$domain"
     restart_caddy
     ok "Domain '$domain' added → $target"
+    echo ""
+    cmd_list
 }
 
 append_block() {
@@ -394,7 +398,7 @@ cmd_remove() {
     # Also clean up the corresponding /etc/hosts entry
     remove_hosts_entry "$domain"
 
-    [[ "$quiet" != "--quiet" ]] && { restart_caddy; ok "Domain '$domain' removed"; }
+    [[ "$quiet" != "--quiet" ]] && { restart_caddy; ok "Domain '$domain' removed"; echo ""; cmd_list; }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
