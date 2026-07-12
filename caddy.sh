@@ -160,11 +160,11 @@ is_root() {
 # Supports: already root, NOPASSWD sudo, or password-based sudo.
 sudo_run() {
     if is_root; then
-        # Already root — run directly, no sudo needed
-        "$@" >/dev/null 2>&1
+        # Already root — run directly (stderr visible so errors aren't hidden)
+        "$@" >/dev/null
     elif [[ -n "$SUDO_PASSWORD" ]]; then
         # Password provided — use sudo -S with stdin
-        echo "$SUDO_PASSWORD" | sudo -S "$@" >/dev/null 2>&1
+        echo "$SUDO_PASSWORD" | sudo -S "$@" >/dev/null
     else
         # No password configured — try NOPASSWD sudo or prompt interactively
         # Stderr kept visible so user can see the password prompt
@@ -455,7 +455,18 @@ parse_managed_blocks() {
 
 restart_caddy() {
     info "Restarting Caddy..."
-    # Use sudo_run so it works on Linux (systemctl needs root) and macOS alike
+
+    # ── Fix Caddyfile permissions ──────────────────────────────────────────
+    # Caddy runs as user 'caddy' on Linux — ensure the config file is readable.
+    if [[ -f "$CADDYFILE" ]]; then
+        if [[ "$PLATFORM" != "macos" ]]; then
+            # Linux: ensure caddy user can read the file
+            sudo_run chown caddy:caddy "$CADDYFILE" 2>/dev/null || true
+            sudo_run chmod 644 "$CADDYFILE" 2>/dev/null || true
+        fi
+    fi
+
+    # ── Restart Caddy ─────────────────────────────────────────────────────
     if sudo_run sh -c "$CADDY_RESTART_CMD"; then
         ok "Caddy restarted"
     else
