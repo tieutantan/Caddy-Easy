@@ -5,6 +5,9 @@ Manage local domains with Caddy — add, remove, list. Works on macOS, Ubuntu, C
 ## Quick Start
 
 ```bash
+# 0.
+git clone https://github.com/tieutantan/Caddy-Easy.git
+
 # 1. Install Caddy + mkcert + CA (skip if already installed)
 ./install.sh
 
